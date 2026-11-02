@@ -1,0 +1,22 @@
+text,category
+"My UPI payment failed",UPI Failure
+"Money was deducted but payment failed",UPI Failure
+"The UPI transaction is still pending",UPI Failure
+"My card was declined at the store",Card Issue
+"My debit card is not working",Card Issue
+"I need to block my card",Card Issue
+"I want a refund for my purchase",Refund
+"My refund has not arrived",Refund
+"How can I get my money back",Refund
+"I don't recognize this transaction",Suspicious Transaction
+"There is an unknown payment in my account",Suspicious Transaction
+"Someone used my card without permission",Suspicious Transaction
+"I transferred money but the receiver did not get it",Transfer Issue
+"My bank transfer is pending",Transfer Issue
+"How can I transfer money",Transfer Issue
+"How do I change my phone number",Account Issue
+"I forgot my banking password",Account Issue
+"How can I update my profile",Account Issue
+"How can I download my bank statement",General Query
+"What are your banking hours",General Query
+"How do I check my account balance",General Query
