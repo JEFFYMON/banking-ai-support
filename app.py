@@ -1,5 +1,10 @@
-import pandas as pd
+
+import os
+from pathlib import Path
+
 import gradio as gr
+import pandas as pd
+from dotenv import load_dotenv
 
 from src.preprocessing import clean_text
 from src.entity_extraction import extract_entities
@@ -8,24 +13,41 @@ from src.llm_service import analyze_ticket, chat_with_customer
 
 
 # ============================================================
-# DATA
+# CONFIGURATION
 # ============================================================
 
-DATA_PATH = "data/tickets.csv"
+BASE_DIR = Path(__file__).resolve().parent
+DATA_PATH = BASE_DIR / "data" / "tickets.csv"
+
+# Load local environment variables from .env
+load_dotenv(BASE_DIR / ".env")
+
+
+# ============================================================
+# LOAD DATASET AND TRAIN ML MODEL
+# ============================================================
+
+if not DATA_PATH.exists():
+    raise FileNotFoundError(
+        f"Dataset not found: {DATA_PATH}. "
+        "Please check that data/tickets.csv exists."
+    )
 
 data = pd.read_csv(DATA_PATH)
+
+if data.empty:
+    raise ValueError("The tickets.csv dataset is empty.")
 
 ml_model = train_classifier(data)
 
 
 # ============================================================
-# TICKET ANALYZER
+# SUPPORT TICKET ANALYZER
 # ============================================================
 
 def analyze_customer_ticket(ticket_text):
 
     if not ticket_text or not ticket_text.strip():
-
         return (
             "Please enter a customer support ticket.",
             "",
@@ -38,185 +60,152 @@ def analyze_customer_ticket(ticket_text):
             ""
         )
 
-    cleaned_text = clean_text(
-        ticket_text
-    )
-
-    # Traditional ML classification
-    ml_category, ml_confidence = predict(
-        ml_model,
-        cleaned_text
-    )
-
-    # Rule-based entity extraction
-    entities = extract_entities(
-        ticket_text
-    )
-
     try:
+        cleaned_text = clean_text(ticket_text)
 
-        # Gemini analysis
-        gemini_result = analyze_ticket(
-            ticket_text
+        ml_category, ml_confidence = predict(
+            ml_model,
+            cleaned_text
         )
 
-        category = gemini_result.category
+        entities = extract_entities(ticket_text)
 
-        priority = gemini_result.priority
+        # AI-powered ticket analysis
+        try:
+            ai_result = analyze_ticket(ticket_text)
 
-        sentiment = gemini_result.sentiment
+            category = ai_result.category
+            priority = ai_result.priority
+            sentiment = ai_result.sentiment
+            summary = ai_result.summary
+            team = ai_result.suggested_team
 
-        summary = gemini_result.summary
-
-        team = gemini_result.suggested_team
-
-        amount = (
-            gemini_result.amount
-            or
-            (
-                ", ".join(entities["amount"])
-                if entities["amount"]
+            amount = ai_result.amount or (
+                ", ".join(entities.get("amount", []))
+                if entities.get("amount")
                 else "Not detected"
             )
+
+            transaction_id = ai_result.transaction_id or (
+                ", ".join(entities.get("transaction_id", []))
+                if entities.get("transaction_id")
+                else "Not detected"
+            )
+
+            payment_method = ai_result.payment_method or (
+                ", ".join(entities.get("payment_method", []))
+                if entities.get("payment_method")
+                else "Not detected"
+            )
+
+        except Exception as error:
+            print(f"AI ticket analysis failed: {error}")
+
+            # Traditional ML fallback
+            category = ml_category
+            priority = "MEDIUM"
+            sentiment = "UNKNOWN"
+
+            summary = (
+                "AI analysis is temporarily unavailable. "
+                "The ticket was classified using the "
+                "traditional machine-learning model."
+            )
+
+            team = "General Support"
+
+            amount = (
+                ", ".join(entities.get("amount", []))
+                if entities.get("amount")
+                else "Not detected"
+            )
+
+            transaction_id = (
+                ", ".join(entities.get("transaction_id", []))
+                if entities.get("transaction_id")
+                else "Not detected"
+            )
+
+            payment_method = (
+                ", ".join(entities.get("payment_method", []))
+                if entities.get("payment_method")
+                else "Not detected"
+            )
+
+        confidence = f"{ml_confidence * 100:.1f}%"
+
+        review_status = (
+            "Human Review Required"
+            if ml_confidence < 0.70
+            else "AI Analysis Complete"
         )
 
-        transaction_id = (
-            gemini_result.transaction_id
-            or
-            (
-                ", ".join(entities["transaction_id"])
-                if entities["transaction_id"]
-                else "Not detected"
-            )
-        )
+        final_team_status = f"{team} | {review_status}"
 
-        payment_method = (
-            gemini_result.payment_method
-            or
-            (
-                ", ".join(entities["payment_method"])
-                if entities["payment_method"]
-                else "Not detected"
-            )
+        return (
+            category,
+            priority,
+            sentiment,
+            confidence,
+            amount,
+            transaction_id,
+            payment_method,
+            summary,
+            final_team_status
         )
 
     except Exception as error:
+        print(f"Ticket processing error: {error}")
 
-        print(
-            f"Gemini ticket analysis failed: {error}"
+        return (
+            "Analysis Error",
+            "UNKNOWN",
+            "UNKNOWN",
+            "N/A",
+            "Not detected",
+            "Not detected",
+            "Not detected",
+            f"Unable to analyze ticket: {error}",
+            "Please try again or contact support."
         )
-
-        # ML fallback
-        category = ml_category
-
-        priority = "MEDIUM"
-
-        sentiment = "UNKNOWN"
-
-        summary = (
-            "Gemini analysis is temporarily unavailable. "
-            "The ticket was classified using the traditional "
-            "machine-learning model."
-        )
-
-        team = "General Support"
-
-        amount = (
-            ", ".join(entities["amount"])
-            if entities["amount"]
-            else "Not detected"
-        )
-
-        transaction_id = (
-            ", ".join(entities["transaction_id"])
-            if entities["transaction_id"]
-            else "Not detected"
-        )
-
-        payment_method = (
-            ", ".join(entities["payment_method"])
-            if entities["payment_method"]
-            else "Not detected"
-        )
-
-    confidence = (
-        f"{ml_confidence * 100:.1f}%"
-    )
-
-    review_status = (
-        "Human Review Required"
-        if ml_confidence < 0.70
-        else
-        "AI Analysis Complete"
-    )
-
-    final_team_status = (
-        f"{team} | {review_status}"
-    )
-
-    return (
-        category,
-        priority,
-        sentiment,
-        confidence,
-        amount,
-        transaction_id,
-        payment_method,
-        summary,
-        final_team_status
-    )
 
 
 # ============================================================
-# CUSTOMER CHAT
+# CUSTOMER AI CHATBOT
 # ============================================================
 
-def customer_chat(
-    message,
-    history
-):
+def customer_chat(message, history):
 
     if not message or not message.strip():
-
         return history or []
 
     history = history or []
 
     try:
-
-        reply = chat_with_customer(
-            message,
-            history
-        )
+        reply = chat_with_customer(message, history)
 
     except Exception as error:
-
-        print(
-            f"Chatbot error: {error}"
-        )
+        print(f"Chatbot error: {error}")
 
         reply = (
-            "I'm temporarily unable to connect to the "
-            "AI service. Please try again shortly. "
-            "For urgent account-security issues, "
-            "please use the bank's official support channel."
+            "I'm temporarily unable to connect to the AI service. "
+            "Please try again shortly. For urgent account-security "
+            "issues, please use your bank's official support channel."
         )
 
-    history.append(
-        {
-            "role": "user",
-            "content": message
-        }
-    )
+    updated_history = list(history)
 
-    history.append(
-        {
-            "role": "assistant",
-            "content": reply
-        }
-    )
+    updated_history.append({
+        "role": "user",
+        "content": message
+    })
 
-    return history
+    updated_history.append({
+        "role": "assistant",
+        "content": reply
+    })
+
+    return updated_history
 
 
 # ============================================================
@@ -224,7 +213,6 @@ def customer_chat(
 # ============================================================
 
 def clear_chat():
-
     return [], ""
 
 
@@ -233,54 +221,49 @@ def clear_chat():
 # ============================================================
 
 with gr.Blocks(
-    title="BankAssist - AI Banking Support"
+    title="BankAssist - AI Banking Customer Support",
+    theme=gr.themes.Soft()
 ) as app:
 
-    gr.Markdown(
-        """
+    gr.Markdown("""
 # 🏦 BankAssist
 
 ### AI-Powered Banking Customer Support
 
-Ask questions about banking services, payments, cards,
-transfers, refunds, ATMs, and online banking.
-"""
-    )
+Your intelligent assistant for common banking questions,
+payments, cards, transfers, refunds, ATMs, and online banking.
+""")
 
     with gr.Tabs():
 
-        # ====================================================
+        # ----------------------------------------------------
         # CUSTOMER AI ASSISTANT
-        # ====================================================
+        # ----------------------------------------------------
 
-        with gr.Tab(
-            "💬 Customer AI Assistant"
-        ):
+        with gr.Tab("💬 Customer AI Assistant"):
 
-            gr.Markdown(
-                """
-## How can I help?
+            gr.Markdown("""
+## How can I help you?
 
 Ask a banking question in normal language.
 
-BankAssist can explain common banking issues and
-guide you to the appropriate support process.
+BankAssist can explain common banking issues and guide you
+towards the appropriate support process.
 
-### Security Notice
+### 🔒 Security Notice
 
-Do not enter:
+Never enter sensitive information such as:
 
 - Passwords
 - PINs
 - OTPs
 - CVVs
-- Full card numbers
-- Full account numbers
-"""
-            )
+- Full debit or credit card numbers
+- Full bank account numbers
+""")
 
             chatbot = gr.Chatbot(
-                label="BankAssist",
+                label="BankAssist Assistant",
                 height=500
             )
 
@@ -288,9 +271,7 @@ Do not enter:
 
                 chat_input = gr.Textbox(
                     label="Your question",
-                    placeholder=(
-                        "Example: Why did my UPI payment fail?"
-                    ),
+                    placeholder="Example: Why did my UPI payment fail?",
                     lines=2,
                     scale=8
                 )
@@ -307,10 +288,7 @@ Do not enter:
 
             send_button.click(
                 fn=customer_chat,
-                inputs=[
-                    chat_input,
-                    chatbot
-                ],
+                inputs=[chat_input, chatbot],
                 outputs=chatbot
             ).then(
                 fn=lambda: "",
@@ -320,10 +298,7 @@ Do not enter:
 
             chat_input.submit(
                 fn=customer_chat,
-                inputs=[
-                    chat_input,
-                    chatbot
-                ],
+                inputs=[chat_input, chatbot],
                 outputs=chatbot
             ).then(
                 fn=lambda: "",
@@ -334,37 +309,28 @@ Do not enter:
             clear_button.click(
                 fn=clear_chat,
                 inputs=None,
-                outputs=[
-                    chatbot,
-                    chat_input
-                ]
+                outputs=[chatbot, chat_input]
             )
 
-            gr.Markdown(
-                """
-**Important:** BankAssist provides information and
-guidance. It does not access accounts or perform
+            gr.Markdown("""
+**Important:** BankAssist provides general information and
+guidance. It does not access bank accounts or perform
 banking transactions.
-"""
-            )
+""")
 
-        # ====================================================
+        # ----------------------------------------------------
         # SUPPORT TICKET ANALYZER
-        # ====================================================
+        # ----------------------------------------------------
 
-        with gr.Tab(
-            "🎫 Support Ticket Analyzer"
-        ):
+        with gr.Tab("🎫 Support Ticket Analyzer"):
 
-            gr.Markdown(
-                """
+            gr.Markdown("""
 ## Analyze a Customer Support Ticket
 
 This module combines traditional machine learning
-with Gemini to classify and summarize banking
-support tickets.
-"""
-            )
+with AI-powered analysis to classify and summarize
+banking customer support tickets.
+""")
 
             ticket_input = gr.Textbox(
                 label="Customer Support Ticket",
@@ -381,9 +347,7 @@ support tickets.
                 variant="primary"
             )
 
-            gr.Markdown(
-                "## AI Analysis"
-            )
+            gr.Markdown("## AI Analysis Results")
 
             with gr.Row():
 
@@ -445,13 +409,22 @@ support tickets.
 
 
 # ============================================================
-# START APPLICATION
+# START APPLICATION - LOCAL AND RENDER
 # ============================================================
 
 if __name__ == "__main__":
 
+    # Render automatically provides the PORT variable.
+    # When running locally, use port 7862.
+    port = int(os.environ.get("PORT", "7862"))
+
+    print("=" * 55)
+    print("Starting BankAssist - AI Banking Customer Support")
+    print(f"Server port: {port}")
+    print("=" * 55)
+
     app.launch(
-        server_name="127.0.0.1",
-        server_port=7862,
+        server_name="0.0.0.0",
+        server_port=port,
         show_error=True
     )
