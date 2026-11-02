@@ -4,4 +4,4 @@ scikit-learn
 joblib
 pydantic
 beautifulsoup4
-openai
+openaipython-dotenv
